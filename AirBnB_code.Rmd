@@ -1,0 +1,155 @@
+---
+title: "AirBnb Mexico City"
+author: "LB"
+date: "1"
+output: html_document
+---
+
+```{r, setup, include=FALSE}
+knitr::opts_chunk$set(
+  message = FALSE, 
+  warning = FALSE, 
+  tidy=FALSE,     # display code as typed
+  size="small")   # slightly smaller font for code
+options(digits = 3)
+
+# default figure size
+knitr::opts_chunk$set(
+  fig.width=6.75, 
+  fig.height=6.75,
+  fig.align = "center"
+)
+```
+
+
+```{r load-libraries, include=FALSE}
+library(tidyverse)  # Load ggplot2, dplyr, and all the other tidyverse packages
+library(mosaic)
+library(ggthemes)
+library(lubridate)
+library(here)
+library(skimr)
+library(janitor)
+library(httr)
+library(readxl)
+library(vroom)
+library(data.table)
+library(infer)
+library(ggridges)
+library(viridis)
+library(tidyquant)
+library(rvest)    # scrape websites
+library(purrr)  
+library(lubridate) #to handle dates
+library(ggrepel) # to avoid loverlapping legends
+```
+
+
+```{r vroom}
+listings <- vroom("http://data.insideairbnb.com/mexico/df/mexico-city/2020-06-20/data/listings.csv.gz")
+```
+
+# Exploratory Data Analysis
+
+## Data set form and variables
+```{r glimpse}
+glimpse(listings)
+```
+
+We have 21824 rows of data and 106 columns, i.e. variables. We can see the following data types:
+- Strings (<chr>)
+- Numbers (<dbl>)
+- Dates (<date>)
+- Logicals (<lgl>)
+
+## Numerical Variables
+```{r}
+# Convert price from characters to numeric format
+listings2 <- listings %>% 
+  mutate(price = as.numeric(gsub('[$,]', '', price)),
+        weekly_price = as.numeric(gsub('[$,]', '', weekly_price)),
+        monthly_price = as.numeric(gsub('[$,]', '', monthly_price)), 
+        security_deposit = as.numeric(gsub('[$,]', '', security_deposit)),
+        cleaning_fee = as.numeric(gsub('[$,]', '', cleaning_fee)),
+        extra_people = as.numeric(gsub('[$,]', '', extra_people))) %>%
+  mutate(host_response_rate = as.numeric(gsub('[%]', '', host_response_rate)) / 100,
+         host_acceptance_rate = as.numeric(gsub('[%]', '', host_acceptance_rate)) / 100)
+
+
+listings2 %>%
+  select_if(is.numeric)
+```
+Which variables are numbers? 
+
+id, scrape_id, host_id, host_listings_count, latitude, longtitude, accomodates, bathrooms, bedrooms, beds, square_feet, guests_included, minimum_nights, maximum_nights, minimum_minimum_nights, price(converted from character)
+
+## Factor Variables
+Using the skim function we can see the number of unique variables per column. This helps us identify which category might contain factor variables. We can then use the distinct function to display the distinct variables of these categories. We find the following
+- Host response time: N/A, Within an hour, WIthin a day, Within a few hours, a few days or more. We can logically order the ranking of these values.
+- Market: Mexico City, Other (International), Pochutla, Sanstander, Playa del Carmen
+- Room Type: Entire home / apt, Private room, Hotel room, Shared room
+- Bed Type: Futon, Real Bed, Couch, Pull-out Sofa, Airbed.
+- Cancellation Policy: flexible, moderate, strict 14 with grace period, super strict 30, super strict 60. We can logically order the ranking of these values.
+- Experiences offered: the only answer is none, presumeably this features doesnt exist in Mexico City
+- Property type: We will summarise the 30+ categories into Apartment, House, Condominium, Loft and Other (which contains the remaining options)
+
+
+
+```{r skim}
+skim(listings)
+
+listings %>%  distinct(host_response_time)
+listings %>%  distinct(market)
+listings %>%  distinct(room_type)
+listings %>%  distinct(bed_type)
+listings %>%  distinct(cancellation_policy)
+listings %>%  distinct(experiences_offered)
+
+listings3 <- listings2 %>% 
+  mutate(host_response_time = factor(host_response_time, c("N/A","within an hour", "within a few hours", "within a day", "a few days or more"), 
+                                     levels = c("within an hour", "within a few hours", "within a day", "a few days or more", "N/A")),
+         cancellation_policy = factor(cancellation_policy, c("flexible", "moderate", "strict_14_with_grace_period", "super_strict_30", "super_strict_60"), 
+                                     levels = c("flexible", "moderate", "strict_14_with_grace_period", "super_strict_30", "super_strict_60")),
+         prop_type_simplified = case_when(property_type %in% c("Apartment","House", "Condominium","Loft") ~ property_type, 
+                                          TRUE ~ "Other"))
+
+                   
+```
+
+## Missing Values
+- Weekly and monthly price are missing most data points. We will exclude them going forwards and only focus on price.
+- Square feet is missing many datapoints. This makes the variable essentially unuseable.
+- Cleaning fee has multiple missing values. We should not exclude these as it means there is no cleaning fee, i.e. it is 0.
+- Security deposit also has multiple missing values. We should not exclude these as it means we have no deposit requirements, i.e. it is 0.
+- Host acceptance and respone rate are missing a lot of values. This will most likely mean that their listing has been their first listing. We should be careful how to treat this variable going forwards, the missing values might need to be excluded.
+- Similarly the review scores are missing for many listings. Most likely these are now listings and have not been reviewed. We need to be careful how to treat them going fowards.
+- Bed, bedrooms and bathrooms have a small amount of missing data points. We can't safely assume these to just be 0 by nature so we should exclude them from the dataset
+
+
+```{r missing values}
+
+skim(listings3)
+
+listings4 <- listings3 %>%
+  mutate(cleaning_fee = case_when(is.na(cleaning_fee) ~ 0, 
+                                  TRUE ~ cleaning_fee),
+         security_deposit = case_when(is.na(security_deposit) ~ 0, 
+                                  TRUE ~ security_deposit))
+
+```
+
+## Maximum and minimum nights
+
+Airbnb is most commonly used for travel purposes, i.e., as an alternative to traditional hotels. We only want to include listings in our regression analysis that are intended for travel purposes. When looking at the distribution of the minimum nights across listings we see that it is heavily left skewed. The majoirty of listings is as expected for short term renting, however there are some big outliers with over 100 days minimum nights stay. We will filter the data set to only include listigns with a minimum night stay of <= 4.
+
+```{r travel purpose}
+
+count_minimum_nights <- listings4 %>% 
+  group_by(minimum_nights) %>% 
+  summarise(count = n())
+
+```
+
+What are the most common values for the variable minimum_nights?
+Is ther any value among the common values that stands out?
+What is the likely intended purpose for Airbnb listings with this seemingly unusual value for minimum_nights?
