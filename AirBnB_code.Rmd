@@ -42,6 +42,7 @@ library(rvest)    # scrape websites
 library(purrr)  
 library(lubridate) #to handle dates
 library(ggrepel) # to avoid loverlapping legends
+library(leaflet)
 ```
 
 
@@ -126,7 +127,8 @@ listings3 <- listings2 %>%
                                           
 ```
 
- We find the following
+ We find the following:
+ 
 - Host response time: N/A, Within an hour, WIthin a day, Within a few hours, a few days or more. We have logically ordered the ranking of these values.
 - Market: Mexico City, Other (International), Pochutla, Sanstander, Playa del Carmen
 - Room Type: Entire home / apt, Private room, Hotel room, Shared room
@@ -135,9 +137,20 @@ listings3 <- listings2 %>%
 - Experiences offered: the only answer is none, presumably this features doesnt exist in Mexico City
 - Property type: We will summarise the 30+ categories into Apartment, House, Condominium, Loft and Other (which contains the remaining options)
 
-## Missing Values
+## List Values
 
-```{r missing values}
+We could identify two variables that contained multiple values, i.e. a list of values - amenities and jurisdiction_names. We will need to clean these lists into seperate columns to get our data into a tidy format.
+
+```{r tidying}
+
+# Dung can you do this?
+    
+
+```
+
+## Missing Values & Uniqueness 
+
+```{r missing values and uniqueness}
 
 skim(listings3)
 
@@ -151,6 +164,8 @@ listings4 <- listings3 %>%
 
 ```
 
+*Missing Values*
+
 - Weekly and monthly price are missing most data points. We will exclude them going forwards and only focus on price.
 - Square feet is missing many data points. This makes the variable essentially unusable.
 - Cleaning fee has multiple missing values. We should not exclude these as it means there is no cleaning fee, i.e. it is 0.
@@ -158,6 +173,12 @@ listings4 <- listings3 %>%
 - Host acceptance and response rate are missing a lot of values. This will most likely mean that their listing has been their first listing. We should be careful how to treat this variable going forwards, the missing values might need to be excluded.
 - Similarly the review scores are missing for many listings. Most likely these are now listings and have not been reviewed. We need to be careful how to treat them going forwards.
 - Bed, bedrooms and bathrooms have a small amount of missing data points. We can't safely assume these to just be 0 by nature so we should exclude them from the data set
+
+*Uniqueness*
+
+- The most important variable to look at here is lisiting url. We only have unique values here which is important so that we do not double count any properties
+- Interestingly we don't have only unique names for the listings, nor are all descriptions unique. Even further, many image urls are identical - many hosts in Mexico City seem to make their lifes easy by copying other listings information to their own! We don't believe this is enough evidence to exlcude any listings however.
+
 
 ## Maximum and minimum nights
 
@@ -191,9 +212,179 @@ What is the likely intended purpose for Airbnb listings with this seemingly unus
 
 Airbnb is most commonly used for travel purposes, i.e., as an alternative to traditional hotels. We only want to include listings in our regression analysis that are intended for travel purposes. When looking at the distribution of the minimum nights across listings we see that it is heavily left skewed. The majority of listings is as expected for short term renting, however there are some big outliers with over 100 days minimum nights stay. We will filter the data set to only include listings with a minimum night stay of <= 4.
 
-```{r}
+```{r filter minimum nights}
 listings4 %>%
 
 # Filter properties with 4 minimum nights or less
 filter(minimum_nights <= 4)
 ```
+
+## Variables of Interest
+
+Our prior analyses have highlighted a list of variables that could be interesting for further analysis. In this section we will look at them in more detail
+
+- Price
+- Cleaning Fee
+- Security Deposit
+- Bed
+- Bedrooms
+- Bathrooms
+- Availability (30, 60, 90, 365)
+- Guests Included
+- Extra People
+- Review Scores (review_scores_rating is the total score)
+- Property Types
+- Accomodates
+
+### Price
+
+```{r price}
+# Create simple density plot
+listings4 %>%
+  ggplot() +
+  geom_histogram( aes(x = price), binwidth = 100)  +
+  labs(subtitle = "Price Histogramm",
+       title = "Excessive price outliers should be investigated") +
+  theme_economist()
+
+# look for outliers - create boxplot on log'ed price data
+listings4 %>%
+  group_by(property_type) %>% 
+  ggplot() +
+  geom_boxplot(aes(x=prop_type_simplified, y=log(price))) +
+  theme(axis.title.x = element_blank()) +
+  labs(subtitle = "Exponential Price Distribution by Property Type",
+       title = "Excessive price outliers should be excluded",
+       y = "Price - Log-Scale") +
+  theme_economist()
+
+# exclude log(price outliers)
+listings5 <- listings4 %>% 
+  filter(!log(price) %in% boxplot.stats(log(price))$out)
+
+# Check new distribution
+listings5 %>%
+  group_by(property_type) %>% 
+  ggplot() +
+  geom_boxplot(aes(x=prop_type_simplified, y=price)) +
+  labs(subtitle = "Price Distribution by Property Type",
+       title = "Price outliers within reasoable range",
+       y = "Price") +
+  theme(axis.title.x = element_blank())+
+  theme_economist()
+```
+
+We saw a very skewed distribution of price. Outliers that charge over $10,000 per night for a property do not seem to be legitamite properties and were therefore excluded.
+
+### Review Scores
+
+```{r review scores}
+# CLook at distribution to ratings
+listings5 %>%
+  ggplot() +
+  geom_histogram( aes(x = review_scores_rating), binwidth = 1)  +
+  labs(subtitle = "Rating Histogramm",
+       title = "Ratings are weighed towards high eng - more so for superhosts") +
+  facet_wrap(~host_is_superhost) + 
+  theme_economist()
+
+# Investigate relation of Rating to Price
+listings5 %>%
+  ggplot() +
+  geom_point( aes(x = review_scores_rating, y = price))  +
+  geom_smooth(aes(x = review_scores_rating, y = price), method='lm') +
+  labs(subtitle = "Rating vs Price",
+       title = "Well rated properties seem to charge more on average \n - but driven by hugely expensive properties") +
+  theme_economist()
+
+```
+
+Looking at review scores we saw that the ratings are heavily skewed to the perfect ratings. This could likely be explained by the reciprocal rating mechanism of AirBnB, where hosts also rate the tenants and the tenants' score impacts their likelihood of being accepted to a new booking. Going forwards it could be considered to disregard low rated properties (e.g. <5) as these will have had substantial problems and might be outliers. A normal travel wouldn't consider properties with such low ratings.
+
+That being said we saw a slight overperformance of superhosts compared to normal hosts. We also saw a tendency of better rated properties to charge a higher price. This seems to however be especially driven by expensive properties.
+
+### NEXT VARIABLE
+
+# Mapping
+
+```{r mapping}
+# create colour palette for property type
+factpal <- colorFactor(topo.colors(5), listings4$property_type)
+
+# create colour palette for price
+percentile_price <- listings4 %>% 
+  summarise(percentile_price = (price - min(price))/ (max(price) - min(price)))
+
+listings4 <- listings4 %>% 
+  mutate(content = paste(property_type, "for $",(price), sep = " "))
+
+leaflet(listings4) %>% 
+  addProviderTiles("OpenStreetMap.Mapnik") %>% 
+  addCircleMarkers(lng = ~longitude, 
+                   lat = ~latitude, 
+                   radius = 1, 
+                   color = ~factpal(property_type), 
+                   fillOpacity =  ~percentile_price,  # dont think this works
+                   popup = ~listing_url,
+                   label = ~content)
+
+```
+
+
+# Regression Analysis
+
+For the target variable , we will use the cost for two people to stay at an Airbnb location for four (4) nights.The new variable called price_4_nights that uses price, cleaning_fee, guests_included, and extra_people to calculate the total cost for two people to stay at the Airbnb property for 4 nights. This is will be our dependent variable.
+
+```{r}
+```
+
+Use histograms or density plots to examine the distributions of price_4_nights and log(price_4_nights). Which variable should you use for the regression model? Why?
+```{r}
+```
+
+
+Fit a regression model called model1 with the following explanatory variables: prop_type_simplified, number_of_reviews, and review_scores_rating.
+```{r}
+```
+
+
+Interpret the coefficient review_scores_rating in terms of price_4_nights.
+Interpret the coefficient of prop_type_simplified in terms of price_4_nights.
+
+We want to determine if room_type is a significant predictor of the cost for 4 nights, given everything else in the model. Fit a regression model called model2 that includes all of the explanantory variables in model1 plus room_type.
+```{r}
+```
+
+
+# Further variables/questions to explore on our own
+
+Our dataset has many more variables, so here are some ideas on how you can extend your analysis
+
+
+## Are the number of bathrooms, bedrooms, beds, or size of the house (accomodates) significant predictors of price_4_nights?
+
+
+## Do superhosts (host_is_superhost) command a pricing premium, after controlling for other variables?
+
+
+## Most owners advertise the exact location of their listing (is_location_exact == TRUE), while a non-trivial proportion don’t. After controlling for other variables, is a listing’s exact location a significant predictor of price_4_nights?
+## For all cities, there are 3 variables that relate to neighbourhoods: neighbourhood, neighbourhood_cleansed, and neighbourhood_group_cleansed. There are typically more than 20 neighbourhoods in each city, and it wouldn’t make sense to include them all in your model. Use your city knowledge, or ask someone with city knowledge, and see whether you can group neighbourhoods together so the majority of listings falls in fewer (5-6 max) geographical areas. You would thus need to create a new categorical variabale neighbourhood_simplified and determine whether location is a predictor of price_4_nights
+
+
+## What is the effect of cancellation_policy on price_4_nights, after we control for other variables?
+
+
+
+# Diagnostics, collinearity, summary tables
+As you keep building your models, it makes sense to:
+
+Check the residuals, using autoplot(model_x)
+
+As you start building models with more explanatory variables, make sure you use `car::vif(model_x)`` to calculate the Variance Inflation Factor (VIF) for your predictors and determine whether you have colinear variables. A general guideline is that a VIF larger than 5 or 10 is large, and your model may suffer from collinearity. Remove the variable in question and run your model again without it.
+
+Create a summary table, using huxtable (https://mfa2021.netlify.app/example/modelling_side_by_side_tables/) that shows which models you worked on, which predictors are significant, the adjusted , and the Residual Standard Error.
+
+#
+Finally, you must use the best model you came up with for prediction. Suppose you are planning to visit the city you have been assigned to over reading week, and you want to stay in an Airbnb. Find Airbnb’s that are apartment with a private room, have at least 10 reviews, and an average rating of at least 90. Use your best model to predict the total cost to stay at this Airbnb for 4 nights. Include the appropriate 95% interval with your prediction. Report the point prediction and interval in terms of price_4_nights.
+
+If you used a log(price_4_nights) model, make sure you anti-log to convert the value in $. To interpret variables that are log-transformed, please have a look at FAQ HOW DO I INTERPRET A REGRESSION MODEL WHEN SOME VARIABLES ARE LOG TRANSFORMED?
