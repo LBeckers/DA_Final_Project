@@ -43,6 +43,11 @@ library(purrr)
 library(lubridate) #to handle dates
 library(ggrepel) # to avoid loverlapping legends
 library(leaflet)
+library(GGally)
+library(huxtable)
+library(Hmisc)
+library(ggfortify)
+library(car)
 ```
 
 
@@ -233,6 +238,7 @@ Our prior analyses have highlighted a list of variables that could be interestin
 - Guests Included
 - Extra People
 - Review Scores (review_scores_rating is the total score)
+- Number of Reviews
 - Property Types
 - Accomodates
 
@@ -305,6 +311,15 @@ That being said we saw a slight overperformance of superhosts compared to normal
 
 ### NEXT VARIABLE
 
+```{r GGally}
+# CLook at distribution to ratings
+listings5 %>%
+  summarise(price, cleaning_fee, review_scores_rating, beds, accommodates, extra_people) %>% 
+  ggpairs()
+
+```
+
+
 # Mapping
 
 ```{r mapping}
@@ -312,13 +327,13 @@ That being said we saw a slight overperformance of superhosts compared to normal
 factpal <- colorFactor(topo.colors(5), listings4$property_type)
 
 # create colour palette for price
-percentile_price <- listings4 %>% 
+percentile_price <- listings5 %>% 
   summarise(percentile_price = (price - min(price))/ (max(price) - min(price)))
 
-listings4 <- listings4 %>% 
+listings4 <- listings5 %>% 
   mutate(content = paste(property_type, "for $",(price), sep = " "))
 
-leaflet(listings4) %>% 
+leaflet(listings5) %>% 
   addProviderTiles("OpenStreetMap.Mapnik") %>% 
   addCircleMarkers(lng = ~longitude, 
                    lat = ~latitude, 
@@ -335,17 +350,61 @@ leaflet(listings4) %>%
 
 For the target variable , we will use the cost for two people to stay at an Airbnb location for four (4) nights.The new variable called price_4_nights that uses price, cleaning_fee, guests_included, and extra_people to calculate the total cost for two people to stay at the Airbnb property for 4 nights. This is will be our dependent variable.
 
-```{r}
+```{r create price_4_nights}
+listings6 <- listings5 %>% 
+  filter(guests_included > 1) %>% 
+  mutate(price_4_nights = price * 4 + cleaning_fee + extra_people )
+
+
 ```
 
 Use histograms or density plots to examine the distributions of price_4_nights and log(price_4_nights). Which variable should you use for the regression model? Why?
-```{r}
-```
+```{r analyse price_4_nights}
+
+# Create simple density plot
+listings6 %>%
+  ggplot() +
+  geom_density( aes(x = price_4_nights), binwidth = 100)  +
+  labs(subtitle = "Price4Nights Density Plot",
+       title = "Price 4 Nights is heavily right skewed") +
+  theme_economist()
+
+# Create logged density plot
+listings6 %>%
+  ggplot() +
+  geom_density( aes(x = log(price_4_nights) ), binwidth = 100)  +
+  labs(subtitle = "Logged Price4Nights Density Plot",
+       title = " Price 4 Nights Log Normal distributed") +
+  theme_economist()
 
 
-Fit a regression model called model1 with the following explanatory variables: prop_type_simplified, number_of_reviews, and review_scores_rating.
-```{r}
 ```
+
+It looks like we should use the log-transformed price_4_nights variable as it is normally distributed.
+
+Our first regression model called model1 will start with the following explanatory variables: prop_type_simplified, number_of_reviews, and review_scores_rating.
+```{r}
+model1 <- lm(log(price_4_nights) ~ prop_type_simplified + number_of_reviews + review_scores_rating, data = listings6)
+
+summary(model1)
+
+autoplot(model1) + theme_bw()
+
+# Check for collinearity
+vif(model1)
+
+model1_estimates <- summary(model1)$coefficients[,1] 
+model1_estimates <- exp(model1_estimates)
+model1_estimates
+
+
+```
+
+We dont find any high levels of collinearity in terms of VIF. We therefore don't have to exclude any independent variables.
+
+Looking at our property types we can find two statistically significant types fo property compared to the Apartment, namely the House and the Loft:
+
+- For the house we find 
 
 
 Interpret the coefficient review_scores_rating in terms of price_4_nights.
