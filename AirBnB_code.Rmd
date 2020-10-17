@@ -67,6 +67,20 @@ We have 21824 rows of data and 106 columns, i.e. variables. We can see the follo
 - Numbers (<dbl>)
 - Dates (<date>)
 - Logicals (<lgl>)
+- List of Strings 
+
+## Tidy Data
+```{r}
+tidy_listings <- listings %>% 
+  # jurisdiction names uninteresting for analysis and not tidy
+  select(-jurisdiction_names) %>% 
+  mutate(wifi = ifelse("Wifi" %in% amenities, TRUE, FALSE))
+
+tidy_listings$amenities[1]
+
+# Dung - let me know kf you have an idea of how to do this
+  
+```
 
 ## Numerical Variables
 
@@ -143,8 +157,7 @@ listings3 <- listings2 %>%
                                                                        "Iztapalapa", 
                                                                        "Tláhuac",
                                                                        "Milpa Alta") ~ "Discount",
-                                         TRUE ~ "Other")
-  )               
+                                         TRUE ~ "Other"))
 
 
 ```
@@ -458,19 +471,43 @@ listings8 %>%
 ```
 Looking at the accomodation variable we can see that the majority of properties in Mexico City accomodate less than 5 guests. We also find that accomodation, as a proxy for house size, is positively correlated to price.
 
+### Extra People
+
+```{r extra people}
+
+listings8 %>% 
+  ggplot()+
+  geom_histogram(aes(x= extra_people), binwidth = 10)  +
+  labs(subtitle = "Accomodates (House Size) Histogramm",
+       title = "Most properties accomodate less than 5 guests") +
+  theme_economist()
+
+listings8 %>% 
+  ggplot()+
+  geom_point(aes(x= extra_people, y = price)) + 
+  geom_smooth(aes(x= extra_people, y = price), method = "lm") +
+  labs(subtitle = "House Size vs Price",
+       title = "Propoerties that can accomodate more guests are tend to be more expensive") +
+  theme_economist()
+
+```
+
 
 ### NEXT VARIABLE
 
 ## Correlation Analysis
 
-```{r GGally}
+```{r correlation}
 # CLook at distribution to ratings
 listings8 %>%
   summarise((price), cleaning_fee, review_scores_rating, beds, accommodates, extra_people, host_is_superhost) %>% 
   ggpairs(aes(colour = host_is_superhost))
 
-
 ```
+The graphic above shows us a lot about our data:
+
+- Price and cleaning fee are positively correllated. This is intuitive as more expensive properties will be more expensive to clean
+- Price and beds / accomodates are positively correlated. This is int
 
 
 # Mapping
